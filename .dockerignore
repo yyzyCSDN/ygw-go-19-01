@@ -1,0 +1,8 @@
+.git
+.claude
+*.jsonl
+private_oracles
+cases
+workspaces
+local-calibration.json
+case_metadata
