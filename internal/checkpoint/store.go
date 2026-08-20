@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"sort"
 	"sync"
 	"time"
 )
@@ -47,7 +48,7 @@ func (s *MemoryStore) Load(ctx context.Context, uploadID string) (Record, bool, 
 	s.mu.RLock()
 	record, ok := s.records[uploadID]
 	s.mu.RUnlock()
-	return record, ok, nil
+	return cloneRecord(record), ok, nil
 }
 
 func (s *MemoryStore) Save(ctx context.Context, record Record) error {
@@ -59,9 +60,9 @@ func (s *MemoryStore) Save(ctx context.Context, record Record) error {
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	// Retry workers may replay the same or an older revision after a newer
-	// checkpoint was persisted. Accept the replay so the worker can move on;
-	// the most recently written record wins.
+	if current, ok := s.records[record.UploadID]; ok && record.Revision <= current.Revision {
+		return fmt.Errorf("checkpoint revision %d is not newer than %d", record.Revision, current.Revision)
+	}
 	s.records[record.UploadID] = cloneRecord(record)
 	return nil
 }
@@ -83,9 +84,10 @@ func (s *MemoryStore) List(ctx context.Context) ([]Record, error) {
 	s.mu.RLock()
 	result := make([]Record, 0, len(s.records))
 	for _, record := range s.records {
-		result = append(result, record)
+		result = append(result, cloneRecord(record))
 	}
 	s.mu.RUnlock()
+	sort.Slice(result, func(i, j int) bool { return result[i].UploadID < result[j].UploadID })
 	return result, nil
 }
 

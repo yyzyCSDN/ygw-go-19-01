@@ -73,12 +73,11 @@ func (q *Queue) Enqueue(job Job) error {
 		return fmt.Errorf("scheduler queue is closed")
 	}
 	if existing, ok := q.byID[job.ID]; ok {
-		// Retry attempts may be delivered out of order; keep the most
-		// recently submitted attempt so the job is not dropped.
+		if job.Attempt < existing.job.Attempt {
+			return fmt.Errorf("job attempt regression")
+		}
 		existing.job = job
-		item := &queuedJob{job: job}
-		heap.Push(&q.jobs, item)
-		q.byID[job.ID] = item
+		heap.Fix(&q.jobs, existing.index)
 		q.signal()
 		return nil
 	}
