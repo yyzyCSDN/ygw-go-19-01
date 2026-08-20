@@ -51,6 +51,9 @@ func (s *Store) SaveFinal(id string, manifest ObjectManifest) error {
 	if !ok {
 		return ErrSessionNotFound
 	}
+	if session.Status == StatusFinalized {
+		return fmt.Errorf("%w: %s", ErrAlreadyFinalized, id)
+	}
 	session.Status = StatusFinalized
 	session.Manifest = &manifest
 	session.Parts = nil

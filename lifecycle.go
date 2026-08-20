@@ -50,15 +50,22 @@ func validLifecycleTransition(current, next LifecycleState) bool {
 	case LifecycleCommitting:
 		return next == LifecycleComplete || next == LifecycleFailed
 	case LifecycleComplete, LifecycleFailed:
-		// Terminal states may be re-entered when a finalization retry is
-		// dispatched after a partially durable commit.
+		// Terminal states are closed to forward progress: an upload that
+		// already reached complete or failed must never be walked back into
+		// inspecting or committing, nor reset to open. Otherwise the retry
+		// loop resurrects finished uploads, regenerates their manifests, and
+		// accumulates dirty data.
+		//
+		// The only permitted moves are idempotent retries:
+		//   - complete -> complete: re-dispatching finalize after a partially
+		//     durable commit lands back on the same terminal state.
+		//   - failed -> complete: a retried upload that succeeds this time.
+		//   - failed -> failed: recording a repeated failure on a session that
+		//     is already failed (attempts are tracked in the recovery book).
 		if next == LifecycleComplete {
 			return true
 		}
-		if current == LifecycleFailed && next == LifecycleOpen {
-			return true
-		}
-		return next == LifecycleInspecting || next == LifecycleCommitting
+		return current == LifecycleFailed && next == LifecycleFailed
 	default:
 		return false
 	}

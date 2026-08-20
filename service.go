@@ -25,6 +25,13 @@ func (s *Service) Finalize(ctx context.Context, uploadID string) (ObjectManifest
 	if err != nil {
 		return ObjectManifest{}, err
 	}
+	if session.Status == StatusFinalized {
+		// A finalized session has already been committed: its parts were
+		// dropped and the manifest is immutable. Re-running finalize would
+		// rebuild an empty manifest (no parts left to inspect) and overwrite
+		// the good one, so retrying a completed upload must be a no-op.
+		return ObjectManifest{}, fmt.Errorf("%w: %s", ErrAlreadyFinalized, uploadID)
+	}
 	for _, part := range session.Parts {
 		if err := s.inspector.Inspect(ctx, part); err != nil {
 			return ObjectManifest{}, fmt.Errorf("inspect part %d: %w", part.Number, err)
