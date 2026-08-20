@@ -60,21 +60,13 @@ func (l *Log) Read(cursor Cursor, limit int) ([]Event, Cursor) {
 	l.mu.RLock()
 	result := make([]Event, 0)
 	last := cursor.Sequence
-	matched := 0
 	for _, event := range l.events {
-		if event.Sequence <= cursor.Sequence {
-			continue
-		}
-		if cursor.Tenant != "" && event.Tenant != cursor.Tenant {
-			// Cross-tenant events are still observed so the global cursor
-			// stays dense and compaction can drop them safely.
-			last = event.Sequence
+		if event.Sequence <= cursor.Sequence || (cursor.Tenant != "" && event.Tenant != cursor.Tenant) {
 			continue
 		}
 		result = append(result, cloneEvent(event))
 		last = event.Sequence
-		matched++
-		if limit > 0 && matched == limit {
+		if limit > 0 && len(result) == limit {
 			break
 		}
 	}
@@ -85,7 +77,7 @@ func (l *Log) Read(cursor Cursor, limit int) ([]Event, Cursor) {
 func (l *Log) Wait(ctx context.Context, cursor Cursor) ([]Event, Cursor, error) {
 	for {
 		items, next := l.Read(cursor, 0)
-		if len(items) > 0 || l.Size() > 0 {
+		if len(items) > 0 {
 			return items, next, nil
 		}
 		l.mu.RLock()

@@ -44,11 +44,12 @@ func (r *Replicator) Send(ctx context.Context, peer string, batch Batch) error {
 	if peer == "" || batch.Generation == 0 || len(batch.Entries) == 0 {
 		return fmt.Errorf("invalid replication batch")
 	}
-	if _, err := r.table.Advance(peer, batch.To, batch.Generation, r.now()); err != nil {
-		return err
-	}
 	if err := validateBatch(batch); err != nil {
 		return err
+	}
+	current, ok := r.table.Get(peer)
+	if ok && current.Generation == batch.Generation && current.Sequence+1 != batch.From {
+		return fmt.Errorf("replication gap for %s: cursor=%d from=%d", peer, current.Sequence, batch.From)
 	}
 	if err := r.sink.Apply(ctx, cloneBatch(batch)); err != nil {
 		return fmt.Errorf("apply replication batch: %w", err)
@@ -58,12 +59,12 @@ func (r *Replicator) Send(ctx context.Context, peer string, batch Batch) error {
 }
 
 func validateBatch(batch Batch) error {
-	if batch.From == 0 || batch.To < batch.From {
+	if batch.From == 0 || batch.To < batch.From || uint64(len(batch.Entries)) != batch.To-batch.From+1 {
 		return fmt.Errorf("invalid replication range")
 	}
 	for index, entry := range batch.Entries {
 		expected := batch.From + uint64(index)
-		if entry.Sequence != expected {
+		if entry.Sequence != expected || entry.UploadID == "" || len(entry.Payload) == 0 || entry.Digest == "" {
 			return fmt.Errorf("invalid replication entry at sequence %d", expected)
 		}
 	}
