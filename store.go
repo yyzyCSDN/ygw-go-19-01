@@ -29,6 +29,9 @@ func (s *Store) AddPart(uploadID string, part Part) error {
 	if !ok {
 		return fmt.Errorf("%w: %s", ErrSessionNotFound, uploadID)
 	}
+	if session.Status == StatusFinalized {
+		return ErrAlreadyFinalized
+	}
 	session.Parts = append(session.Parts, clonePart(part))
 	s.sessions[uploadID] = cloneSession(session)
 	return nil
@@ -52,9 +55,8 @@ func (s *Store) SaveFinal(id string, manifest ObjectManifest) error {
 		return ErrSessionNotFound
 	}
 	session.Status = StatusFinalized
-	session.Manifest = &manifest
-	session.Parts = nil
-	session.ExpectedParts = 0
+	copyManifest := cloneManifest(manifest)
+	session.Manifest = &copyManifest
 	s.sessions[id] = cloneSession(session)
 	return nil
 }

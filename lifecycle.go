@@ -49,16 +49,8 @@ func validLifecycleTransition(current, next LifecycleState) bool {
 		return next == LifecycleCommitting || next == LifecycleFailed
 	case LifecycleCommitting:
 		return next == LifecycleComplete || next == LifecycleFailed
-	case LifecycleComplete, LifecycleFailed:
-		// Terminal states may be re-entered when a finalization retry is
-		// dispatched after a partially durable commit.
-		if next == LifecycleComplete {
-			return true
-		}
-		if current == LifecycleFailed && next == LifecycleOpen {
-			return true
-		}
-		return next == LifecycleInspecting || next == LifecycleCommitting
+	case LifecycleFailed:
+		return next == LifecycleOpen
 	default:
 		return false
 	}

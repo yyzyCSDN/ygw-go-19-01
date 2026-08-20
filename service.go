@@ -25,6 +25,12 @@ func (s *Service) Finalize(ctx context.Context, uploadID string) (ObjectManifest
 	if err != nil {
 		return ObjectManifest{}, err
 	}
+	if session.Status == StatusFinalized {
+		return ObjectManifest{}, ErrAlreadyFinalized
+	}
+	if err := ValidateSession(session); err != nil {
+		return ObjectManifest{}, err
+	}
 	for _, part := range session.Parts {
 		if err := s.inspector.Inspect(ctx, part); err != nil {
 			return ObjectManifest{}, fmt.Errorf("inspect part %d: %w", part.Number, err)
