@@ -27,11 +27,14 @@ type jobHeap []*queuedJob
 
 func (h jobHeap) Len() int { return len(h) }
 func (h jobHeap) Less(i, j int) bool {
-	if h[i].job.Priority != h[j].job.Priority {
-		return h[i].job.Priority > h[j].job.Priority
-	}
+	// Due time wins: a job that is due (or overdue) must always come out
+	// before a job scheduled for the future, regardless of priority. Priority
+	// only breaks ties between jobs that are due at the same instant.
 	if !h[i].job.NotBefore.Equal(h[j].job.NotBefore) {
 		return h[i].job.NotBefore.Before(h[j].job.NotBefore)
+	}
+	if h[i].job.Priority != h[j].job.Priority {
+		return h[i].job.Priority > h[j].job.Priority
 	}
 	return h[i].job.CreatedAt.Before(h[j].job.CreatedAt)
 }
@@ -100,12 +103,31 @@ func (q *Queue) Next(ctx context.Context, now func() time.Time) (Job, error) {
 		}
 		if len(q.jobs) > 0 {
 			item := q.jobs[0]
-			_ = item.job.NotBefore.Sub(now())
-			// High-priority work must not wait behind a quiet time window.
-			heap.Pop(&q.jobs)
-			delete(q.byID, item.job.ID)
+			wait := item.job.NotBefore.Sub(now())
+			if wait <= 0 {
+				// The earliest-scheduled job is due, so dequeue it. Because the
+				// heap is ordered by due time, no other job can be due either.
+				heap.Pop(&q.jobs)
+				delete(q.byID, item.job.ID)
+				q.mu.Unlock()
+				return item.job, nil
+			}
+			// Top job is scheduled for the future. Everything behind it is due
+			// even later, so there is nothing to run yet: wait until the top job
+			// becomes due, or until enqueue/remove/close signals that the heap
+			// head may have changed.
+			wake := q.wake
 			q.mu.Unlock()
-			return item.job, nil
+			timer := time.NewTimer(wait)
+			select {
+			case <-ctx.Done():
+				timer.Stop()
+				return Job{}, ctx.Err()
+			case <-wake:
+				timer.Stop()
+			case <-timer.C:
+			}
+			continue
 		}
 		wake := q.wake
 		q.mu.Unlock()
