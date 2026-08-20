@@ -66,9 +66,12 @@ func (l *Log) Read(cursor Cursor, limit int) ([]Event, Cursor) {
 			continue
 		}
 		if cursor.Tenant != "" && event.Tenant != cursor.Tenant {
-			// Cross-tenant events are still observed so the global cursor
-			// stays dense and compaction can drop them safely.
-			last = event.Sequence
+			// Cross-tenant events are invisible to a per-tenant cursor: they
+			// are not delivered, and they must not advance the cursor. Letting
+			// a foreign sequence move this cursor would treat another tenant's
+			// progress as our own, so on resume we would skip past events we
+			// never consumed (and compaction could then drop them). A per-tenant
+			// cursor only advances to the last event that belongs to it.
 			continue
 		}
 		result = append(result, cloneEvent(event))
@@ -85,9 +88,12 @@ func (l *Log) Read(cursor Cursor, limit int) ([]Event, Cursor) {
 func (l *Log) Wait(ctx context.Context, cursor Cursor) ([]Event, Cursor, error) {
 	for {
 		items, next := l.Read(cursor, 0)
-		if len(items) > 0 || l.Size() > 0 {
+		if len(items) > 0 {
 			return items, next, nil
 		}
+		// Nothing to deliver for this cursor yet. Wait for the next append
+		// rather than returning an empty result: returning here would busy-loop
+		// and, for a per-tenant cursor, let foreign events advance our cursor.
 		l.mu.RLock()
 		wake := l.wake
 		l.mu.RUnlock()

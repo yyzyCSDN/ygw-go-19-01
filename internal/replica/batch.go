@@ -44,15 +44,15 @@ func (r *Replicator) Send(ctx context.Context, peer string, batch Batch) error {
 	if peer == "" || batch.Generation == 0 || len(batch.Entries) == 0 {
 		return fmt.Errorf("invalid replication batch")
 	}
-	if _, err := r.table.Advance(peer, batch.To, batch.Generation, r.now()); err != nil {
-		return err
-	}
 	if err := validateBatch(batch); err != nil {
 		return err
 	}
 	if err := r.sink.Apply(ctx, cloneBatch(batch)); err != nil {
 		return fmt.Errorf("apply replication batch: %w", err)
 	}
+	// The peer cursor records applied progress, so it may only advance once
+	// the batch has been applied by the sink. Advancing before Apply would
+	// mark a failed batch as consumed and drop its events on the next retry.
 	_, err := r.table.Advance(peer, batch.To, batch.Generation, r.now())
 	return err
 }
