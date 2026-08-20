@@ -73,12 +73,22 @@ func (q *Queue) Enqueue(job Job) error {
 		return fmt.Errorf("scheduler queue is closed")
 	}
 	if existing, ok := q.byID[job.ID]; ok {
-		// Retry attempts may be delivered out of order; keep the most
-		// recently submitted attempt so the job is not dropped.
+		// Enforce a strict monotonic gate per job ID: a queued attempt may
+		// only be superseded by a strictly greater one. A replay of the
+		// same attempt or a regression to an older one is rejected
+		// explicitly so a duplicate or stale delivery can never replace or
+		// duplicate the live attempt. Normal retries always carry attempt+1,
+		// so they pass through untouched. The gate and the replacement run
+		// under the same lock, so two concurrent enqueues cannot both observe
+		// a stale attempt.
+		switch {
+		case job.Attempt < existing.job.Attempt:
+			return fmt.Errorf("%w: %s attempt %d < %d", ErrAttemptRegression, job.ID, job.Attempt, existing.job.Attempt)
+		case job.Attempt == existing.job.Attempt:
+			return fmt.Errorf("%w: %s attempt %d already queued", ErrAttemptConflict, job.ID, job.Attempt)
+		}
 		existing.job = job
-		item := &queuedJob{job: job}
-		heap.Push(&q.jobs, item)
-		q.byID[job.ID] = item
+		heap.Fix(&q.jobs, existing.index)
 		q.signal()
 		return nil
 	}

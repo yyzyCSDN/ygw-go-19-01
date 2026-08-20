@@ -59,9 +59,21 @@ func (s *MemoryStore) Save(ctx context.Context, record Record) error {
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	// Retry workers may replay the same or an older revision after a newer
-	// checkpoint was persisted. Accept the replay so the worker can move on;
-	// the most recently written record wins.
+	// Enforce a strict monotonic gate per upload: a newer revision may only
+	// be superseded by a strictly greater one. Replays of the same revision
+	// or regressions to an older one are rejected explicitly so that a
+	// concurrent retry can never clobber a newer stage. The comparison and
+	// the write happen under the same lock, so two concurrent saves cannot
+	// interleave and both observe a stale revision.
+	existing, ok := s.records[record.UploadID]
+	if ok {
+		switch {
+		case record.Revision < existing.Revision:
+			return fmt.Errorf("%w: %s revision %d < %d", ErrRevisionRegression, record.UploadID, record.Revision, existing.Revision)
+		case record.Revision == existing.Revision:
+			return fmt.Errorf("%w: %s revision %d already persisted", ErrRevisionConflict, record.UploadID, record.Revision)
+		}
+	}
 	s.records[record.UploadID] = cloneRecord(record)
 	return nil
 }
